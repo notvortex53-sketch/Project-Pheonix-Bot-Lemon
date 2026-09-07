@@ -1,0 +1,55 @@
+name: Build AAB
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Locate project (unzip if needed)
+        id: prepare
+        run: |
+          zipfile=$(find . -iname "*.zip" | head -n 1)
+          if [ -n "$zipfile" ]; then
+            echo "Found zip: $zipfile — extracting into ./extracted"
+            mkdir -p extracted
+            unzip -oq "$zipfile" -d extracted
+          fi
+
+          settings_path=$(find . -maxdepth 6 -name "settings.gradle.kts" | head -n 1)
+          if [ -z "$settings_path" ]; then
+            echo "::error::Could not find settings.gradle.kts anywhere in the repo."
+            find . -maxdepth 5
+            exit 1
+          fi
+
+          project_dir=$(dirname "$settings_path")
+          echo "Found project at: $project_dir"
+          echo "project_dir=$project_dir" >> "$GITHUB_OUTPUT"
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build signed release AAB
+        working-directory: ${{ steps.prepare.outputs.project_dir }}
+        env:
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: gradle bundleRelease --stacktrace
+
+      - name: Upload AAB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: phoenix-assistant-release-aab
+          path: ${{ steps.prepare.outputs.project_dir }}/app/build/outputs/bundle/release/*.aab
